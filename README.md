@@ -119,6 +119,9 @@ A single self-contained HTML file is trivial to host, share and audit.
 npm test
 ```
 
+<p align="center"><img src="docs/tests.svg" alt="Animated terminal: npm test checks the engine against RegExp on hand-picked, syntax-error and 4,000 fuzzed cases, with zero failures" width="820"></p>
+<p align="center"><sub>Recorded with <a href="https://github.com/BlazeXYZ/termreel">termreel</a> from <a href="docs/tests.reel"><code>docs/tests.reel</code></a>.</sub></p>
+
 No install needed: the tests use only Node (18 or newer). The test script pulls the engine out of `index.html` and checks it against Node's `RegExp` on 35 hand-picked cases, 10 syntax-error cases, and 4,000 randomly generated pattern/input pairs. GitHub Actions runs the suite on every push and pull request.
 
 ## Limitations and roadmap
