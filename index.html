@@ -1,0 +1,1386 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Regex Replay</title>
+<meta name="description" content="Step through a backtracking regex engine one decision at a time and see where catastrophic backtracking comes from.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a debugger workbench. Editor bar on top, replay stage on the left,
+   run inspector on the right, analysis (structure + growth probe) underneath. */
+:root {
+  --bg: #eceff3;
+  --panel: #fbfcfd;
+  --ink: #17202c;
+  --muted: #5a6575;
+  --line: #d3d9e1;
+  --soft: #e3e8ee;
+  --accent: #b86200;
+  --accent-soft: #fde5c4;
+  --ok: #0b7a5e;
+  --ok-soft: #d2efe5;
+  --no: #c02d39;
+  --no-soft: #f8dadd;
+  --back: #8438c0;
+  --back-soft: #eddcf9;
+  --tent: #fff0d4;
+
+  --f-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --r: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1319; --panel: #161b23; --ink: #e4e9f0; --muted: #96a2b3; --line: #2a3240; --soft: #1f2631;
+    --accent: #f0a340; --accent-soft: #3d2b10; --ok: #3cc69c; --ok-soft: #12352a; --no: #f06a72; --no-soft: #3e1a1f;
+    --back: #bb8cf2; --back-soft: #2d2042; --tent: #2c2414;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1319; --panel: #161b23; --ink: #e4e9f0; --muted: #96a2b3; --line: #2a3240; --soft: #1f2631;
+  --accent: #f0a340; --accent-soft: #3d2b10; --ok: #3cc69c; --ok-soft: #12352a; --no: #f06a72; --no-soft: #3e1a1f;
+  --back: #bb8cf2; --back-soft: #2d2042; --tent: #2c2414;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 var(--f-body); }
+[hidden] { display: none !important; }
+.wrap {
+  max-width: 1280px; margin: 0 auto;
+  padding-block: 28px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 18px;
+}
+.mono, code, input.mono, textarea.mono { font-family: var(--f-mono); }
+code { font-size: .92em; background: var(--soft); padding: 0 .3em; border-radius: 4px; white-space: pre-wrap; }
+q { quotes: "“" "”"; font-family: var(--f-mono); font-size: .92em; }
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Header */
+.top { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 24px; }
+.brand h1 { font: 800 clamp(30px, 5vw, 44px)/1 var(--f-display); letter-spacing: -.02em; margin: 0; text-wrap: balance; }
+.brand h1 span { color: var(--accent); }
+.brand p { margin: 6px 0 0; color: var(--muted); max-width: 60ch; }
+.preset { display: flex; flex-direction: column; gap: 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+select { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 14px; text-transform: none; letter-spacing: 0; max-width: 100%; }
+
+/* Editor */
+.editor { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 14px; }
+.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.field > label, .ptitle { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
+.pattern-box {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 6px 8px 6px 12px;
+}
+.pattern-box:focus-within { border-color: var(--accent); }
+.pattern-box .slash { font: 600 20px var(--f-mono); color: var(--muted); }
+#pattern { flex: 1 1 200px; min-width: 0; border: 0; background: transparent; font: 600 19px var(--f-mono); padding: 6px 0; outline: none; }
+.flags { display: flex; gap: 4px; }
+.flag { width: 30px; height: 30px; border-radius: 7px; border: 1px solid var(--line); background: transparent; font: 600 14px var(--f-mono); color: var(--muted); cursor: pointer; }
+.flag[aria-pressed="true"] { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+.ghost { border: 1px solid var(--line); background: transparent; border-radius: 7px; padding: 4px 10px; height: 30px; cursor: pointer; font-size: 13px; }
+.ghost:hover, .flag:hover { border-color: var(--muted); }
+#input {
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 12px; font: 16px/1.5 var(--f-mono);
+  resize: vertical; min-height: 56px; outline: none; width: 100%;
+}
+#input:focus { border-color: var(--accent); }
+.perr { margin: 0; color: var(--no); font-size: 14px; }
+.banner { border: 1px solid var(--back); background: var(--back-soft); border-radius: var(--r); padding: 10px 14px; font-size: 14px; }
+.banner.err { border-color: var(--no); background: var(--no-soft); }
+
+/* Panels */
+.grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 18px; align-items: start; }
+.grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+.side { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.ptitle { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.hint { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--muted); font-size: 13px; }
+p.hint { margin: 0; }
+
+/* Pattern view */
+.pview { font-size: clamp(20px, 3.2vw, 28px); line-height: 1.7; word-break: break-all; padding: 4px 0 2px; }
+.pc {
+  display: inline-block; min-width: .62em; text-align: center; border-radius: 4px; padding: 0 1px;
+  box-shadow: inset 0 -4px 0 color-mix(in srgb, var(--back) calc(var(--h, 0) * 85%), transparent);
+  transition: background-color .08s;
+}
+.pc.sp { color: var(--muted); }
+.pc.hl { background: var(--soft); }
+.pc.on { background: var(--accent-soft); color: var(--ink); }
+.pc.on.k-ok { background: var(--ok-soft); }
+.pc.on.k-no { background: var(--no-soft); }
+.pc.on.k-back { background: var(--back-soft); }
+.pc.err { background: var(--no-soft); color: var(--no); }
+.pempty { color: var(--muted); font-size: 16px; font-family: var(--f-body); }
+
+/* Tape */
+.tape-scroll { overflow-x: auto; padding: 18px 2px 22px; scrollbar-width: thin; }
+.tape { display: flex; gap: 3px; width: max-content; }
+.cell {
+  position: relative; width: 1.75em; height: 2.4em; display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--line); border-radius: 6px; font-size: 17px; background: var(--panel);
+  transition: background-color .08s, border-color .08s;
+}
+.cell b { font-weight: 400; }
+.cell.ws b { color: var(--muted); }
+.cell i { position: absolute; bottom: -1.45em; font-style: normal; font-size: 10px; color: var(--muted); }
+.cell.end { border-style: dashed; color: var(--muted); font-size: 11px; width: 2.4em; }
+.cell.m { background: var(--ok-soft); border-color: var(--ok); }
+.cell.tent { background: var(--tent); border-color: var(--accent); }
+.cell.ok { background: var(--ok); color: var(--panel); border-color: var(--ok); }
+.cell.ok b, .cell.no b { color: inherit; }
+.cell.no { background: var(--no); color: var(--panel); border-color: var(--no); }
+.cell.cur { box-shadow: 0 0 0 2px var(--accent); }
+.cell.st::before {
+  content: "start"; position: absolute; top: -1.75em; font: 600 9px var(--f-body); letter-spacing: .06em; text-transform: uppercase; color: var(--accent);
+}
+
+.narr { margin: 18px 0 0; min-height: 3em; font-size: 16px; }
+.narr .tag { display: inline-block; font: 600 11px var(--f-body); letter-spacing: .07em; text-transform: uppercase; padding: 2px 7px; border-radius: 99px; margin-right: 8px; vertical-align: 2px; background: var(--soft); color: var(--muted); }
+.narr .tag.k-ok { background: var(--ok-soft); color: var(--ok); }
+.narr .tag.k-no { background: var(--no-soft); color: var(--no); }
+.narr .tag.k-back { background: var(--back-soft); color: var(--back); }
+
+/* Controls */
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.btns { display: flex; gap: 4px; flex-wrap: wrap; }
+.btn {
+  height: 36px; min-width: 36px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel);
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; font-size: 13px;
+}
+.btn:hover { border-color: var(--muted); }
+.btn svg { width: 16px; height: 16px; fill: currentColor; }
+.btn.play { background: var(--ink); color: var(--panel); border-color: var(--ink); min-width: 44px; }
+.btn.bk { color: var(--back); }
+#scrub { flex: 1 1 180px; min-width: 120px; accent-color: var(--accent); }
+.fcount { font: 13px var(--f-mono); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.speed { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
+#speed { width: 160px; max-width: 45vw; accent-color: var(--ink); }
+#speedOut { font-family: var(--f-mono); font-variant-numeric: tabular-nums; min-width: 9ch; }
+
+/* Timeline */
+#timeline { width: 100%; height: 96px; display: block; cursor: pointer; border-radius: 8px; background: var(--soft); touch-action: none; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--muted); }
+.legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; background: var(--c); }
+
+/* Inspector */
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; margin: 0; }
+.stats div { min-width: 0; }
+.stats dt { font-size: 12px; color: var(--muted); }
+.stats dd { margin: 0; font: 600 20px/1.2 var(--f-mono); font-variant-numeric: tabular-nums; }
+.stats dd.big-back { color: var(--back); }
+.native { margin: 0; font-size: 13px; padding: 8px 10px; border-radius: 8px; background: var(--soft); }
+.native.good { background: var(--ok-soft); }
+.native.bad { background: var(--no-soft); }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 12px; }
+td.v { font-family: var(--f-mono); word-break: break-all; }
+td.s { font-family: var(--f-mono); color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+td.none { color: var(--muted); font-style: italic; font-family: var(--f-body); }
+.caps-wrap { overflow-x: auto; }
+.log { list-style: none; margin: 0; padding: 0; font-size: 12px; display: flex; flex-direction: column; }
+.log li { display: grid; grid-template-columns: 6ch minmax(0, 1fr); gap: 8px; padding: 3px 6px; border-radius: 5px; cursor: pointer; }
+.log li:hover { background: var(--soft); }
+.log li.now { background: var(--accent-soft); }
+.log .fn { color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+.log .d { font-family: var(--f-body); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log .d code, .log .d q { font-size: 11.5px; white-space: pre; }
+.log li.k-back .d { color: var(--back); }
+.log li.k-no .d { color: var(--no); }
+.log li.k-ok .d { color: var(--ok); }
+
+/* Structure tree */
+.tree ul { list-style: none; margin: 0; padding-left: 18px; border-left: 1px solid var(--line); margin-left: 6px; }
+.tree > ul { border: 0; padding: 0; margin: 0; }
+.tn { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; padding: 3px 8px; border-radius: 6px; font-size: 14px; }
+.tn:hover { background: var(--soft); }
+.tn.on { background: var(--accent-soft); }
+.tn .th { margin-left: auto; font: 12px var(--f-mono); color: var(--back); font-variant-numeric: tabular-nums; }
+
+/* Probe */
+.probe-in { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: end; }
+.probe-in label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.probe-in input { width: 9em; border: 1px solid var(--line); background: var(--bg); border-radius: 7px; padding: 6px 8px; font-family: var(--f-mono); }
+.probe-svg { width: 100%; height: auto; display: block; }
+.probe-svg .grid line { stroke: var(--line); }
+.probe-svg text { fill: var(--muted); font: 10px var(--f-mono); }
+.probe-svg .area { fill: var(--back-soft); }
+.probe-svg .ln { fill: none; stroke: var(--back); stroke-width: 2; }
+.probe-svg .pt { fill: var(--back); }
+.probe-svg .ab { fill: var(--no); }
+.probe-svg .end { fill: var(--panel); stroke: var(--back); stroke-width: 2; }
+.verdict { margin: 0; font-size: 14px; }
+.chip { display: inline-block; font: 600 11px var(--f-body); letter-spacing: .07em; text-transform: uppercase; padding: 3px 8px; border-radius: 99px; margin-right: 8px; vertical-align: 1px; }
+.chip.safe { background: var(--ok-soft); color: var(--ok); }
+.chip.warn { background: var(--accent-soft); color: var(--accent); }
+.chip.bad { background: var(--no-soft); color: var(--no); }
+
+footer { color: var(--muted); font-size: 13px; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px 28px; border-top: 1px solid var(--line); padding-top: 18px; }
+footer h2 { font: 600 14px var(--f-display); color: var(--ink); margin: 0 0 4px; }
+footer p { margin: 0; max-width: 65ch; }
+
+@media (max-width: 980px) {
+  .grid, .grid2, .editor { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <h1>Regex <span>Replay</span></h1>
+      <p>Watch a backtracking regex engine work through your pattern one decision at a time, and see exactly where the wasted work comes from.</p>
+    </div>
+    <label class="preset" for="preset">Example
+      <select id="preset"></select>
+    </label>
+  </header>
+
+  <section class="editor" aria-label="Pattern and test string">
+    <div class="field">
+      <label for="pattern">Pattern</label>
+      <div class="pattern-box">
+        <span class="slash" aria-hidden="true">/</span>
+        <input id="pattern" class="mono" spellcheck="false" autocomplete="off" autocapitalize="off">
+        <span class="slash" aria-hidden="true">/</span>
+        <div class="flags" role="group" aria-label="Flags">
+          <button class="flag" id="flag-g" data-flag="g" aria-pressed="false" title="g: find every match">g</button>
+          <button class="flag" id="flag-i" data-flag="i" aria-pressed="false" title="i: ignore case">i</button>
+          <button class="flag" id="flag-m" data-flag="m" aria-pressed="false" title="m: ^ and $ match at line breaks">m</button>
+          <button class="flag" id="flag-s" data-flag="s" aria-pressed="false" title="s: dot also matches line breaks">s</button>
+        </div>
+        <button class="ghost" id="copy" title="Copy as a JavaScript regex literal">Copy</button>
+      </div>
+      <p id="perr" class="perr" hidden></p>
+    </div>
+    <div class="field">
+      <label for="input">Test string</label>
+      <textarea id="input" class="mono" rows="2" spellcheck="false"></textarea>
+    </div>
+  </section>
+
+  <div id="banner" class="banner" hidden></div>
+
+  <main class="grid">
+    <section class="panel" aria-label="Replay">
+      <div class="ptitle">Pattern <span class="hint">The violet underline shows how often each piece was tried.</span></div>
+      <div id="pview" class="pview mono"></div>
+
+      <div class="ptitle">Input</div>
+      <div class="tape-scroll" id="tapeScroll"><div id="tape" class="tape mono"></div></div>
+
+      <p id="narr" class="narr" aria-live="polite"></p>
+
+      <div class="controls">
+        <div class="btns">
+          <button class="btn" id="bFirst" title="First step (Home)" aria-label="First step"><svg viewBox="0 0 16 16"><path d="M3 2h2v12H3zM14 2v12L6 8z"/></svg></button>
+          <button class="btn bk" id="bPrevBack" title="Previous backtrack (Shift+←)">↶ Backtrack</button>
+          <button class="btn" id="bPrev" title="Step back (←)" aria-label="Step back"><svg viewBox="0 0 16 16"><path d="M12 2v12L4 8z"/></svg></button>
+          <button class="btn play" id="bPlay" title="Play / pause (Space)" aria-label="Play"><svg viewBox="0 0 16 16" id="playIcon"><path d="M4 2v12l10-6z"/></svg></button>
+          <button class="btn" id="bNext" title="Step forward (→)" aria-label="Step forward"><svg viewBox="0 0 16 16"><path d="M4 2v12l8-6z"/></svg></button>
+          <button class="btn bk" id="bNextBack" title="Next backtrack (Shift+→)">Backtrack ↷</button>
+          <button class="btn" id="bLast" title="Last step (End)" aria-label="Last step"><svg viewBox="0 0 16 16"><path d="M11 2h2v12h-2zM2 2v12l8-6z"/></svg></button>
+        </div>
+        <input type="range" id="scrub" min="0" max="0" value="0" aria-label="Step">
+        <span class="fcount" id="fcount"></span>
+      </div>
+      <div class="speed">
+        <label for="speed">Speed</label>
+        <input type="range" id="speed" min="0" max="100" value="38">
+        <output id="speedOut" for="speed"></output>
+      </div>
+
+      <div class="ptitle">Timeline <span class="hint">Input position at every step. Each drop is the engine rewinding. Click or drag to jump.</span></div>
+      <canvas id="timeline" aria-label="Timeline of input position over steps"></canvas>
+      <div class="legend">
+        <span style="--c: var(--ink)">position in input</span>
+        <span style="--c: var(--back)">backtrack</span>
+        <span style="--c: var(--ok)">match found</span>
+        <span style="--c: var(--accent)">current step</span>
+      </div>
+    </section>
+
+    <aside class="side">
+      <section class="panel" aria-label="Run summary">
+        <div class="ptitle">This run</div>
+        <dl class="stats" id="stats"></dl>
+        <p id="native" class="native"></p>
+      </section>
+      <section class="panel" aria-label="Captures">
+        <div class="ptitle">Captures at this step</div>
+        <div class="caps-wrap"><table id="caps"></table></div>
+      </section>
+      <section class="panel" aria-label="Step log">
+        <div class="ptitle">Step log</div>
+        <ol id="log" class="log mono"></ol>
+      </section>
+    </aside>
+  </main>
+
+  <div class="grid2">
+    <section class="panel" aria-label="Pattern structure">
+      <div class="ptitle">Pattern structure <span class="hint">How the engine reads your pattern. Hover a row to find it in the pattern.</span></div>
+      <div id="tree" class="tree"></div>
+    </section>
+    <section class="panel" aria-label="Growth probe">
+      <div class="ptitle">Growth probe</div>
+      <p class="hint">How does the work grow as the input gets longer? The probe repeats a piece of text 1, 2, 3… times, adds an ending, and counts the steps for each length.</p>
+      <div class="probe-in">
+        <label for="pump">Repeat<input id="pump" spellcheck="false"></label>
+        <label for="suffix">then end with<input id="suffix" spellcheck="false"></label>
+        <button class="btn" id="probeBtn">Run probe</button>
+      </div>
+      <div id="probeChart"></div>
+      <p id="probeVerdict" class="verdict"></p>
+    </section>
+  </div>
+
+  <footer>
+    <div>
+      <h2>What's under the hood</h2>
+      <p>A regex parser and backtracking matcher written from scratch for this page. It follows JavaScript's matching rules and records every decision it makes, and each run is checked against your browser's own RegExp.</p>
+    </div>
+    <div>
+      <h2>Supported syntax</h2>
+      <p>Literals and escapes, <code>.</code>, classes like <code>[^a-z\d]</code>, <code>^ $ \b \B</code>, capturing, non-capturing and named groups, <code>|</code>, greedy and lazy <code>* + ? {n,m}</code>, lookahead <code>(?= )</code> <code>(?! )</code>, and backreferences <code>\1</code> <code>\k&lt;name&gt;</code>. Flags g, i, m, s. Lookbehind and Unicode mode are not supported yet.</p>
+    </div>
+    <div>
+      <h2>Keyboard</h2>
+      <p><code>Space</code> play or pause, <code>←</code> <code>→</code> step, <code>Shift</code> + arrows jump between backtracks, <code>Home</code> <code>End</code> jump to the ends.</p>
+    </div>
+  </footer>
+</div>
+
+<script>
+// ENGINE-START
+const RR = (() => {
+  const isLineTerm = c => c === "\n" || c === "\r" || c === " " || c === " ";
+  const isWordCh = c => c !== undefined && /[A-Za-z0-9_]/.test(c);
+  const BUILTIN = {
+    d: c => c >= "0" && c <= "9",
+    w: c => /[A-Za-z0-9_]/.test(c),
+    s: c => /\s/.test(c),
+  };
+  const QUANT_RE = /^\{(\d+)(?:(,)(\d*))?\}/;
+
+  function parse(src) {
+    let i = 0, groupCount = 0;
+    const nodes = [], names = {}, backrefs = [];
+    const err = (msg, at = i) => { const e = new SyntaxError(msg); e.pos = at; throw e; };
+    const mk = (type, start, props) => {
+      const n = Object.assign({ id: nodes.length, type, start, end: start }, props);
+      nodes.push(n);
+      return n;
+    };
+
+    function parseAlt() {
+      const start = i, alts = [parseSeq()];
+      while (src[i] === "|") { i++; alts.push(parseSeq()); }
+      if (alts.length === 1) return alts[0];
+      const n = mk("alt", start, { alts });
+      n.end = i;
+      return n;
+    }
+    function parseSeq() {
+      const start = i, items = [];
+      while (i < src.length && src[i] !== "|" && src[i] !== ")") items.push(parseQuant(parseAtom()));
+      if (items.length === 1) return items[0];
+      const n = mk("seq", start, { items });
+      n.end = i;
+      return n;
+    }
+    function parseQuant(atom) {
+      const c = src[i];
+      let min, max;
+      if (c === "*") { min = 0; max = Infinity; i++; }
+      else if (c === "+") { min = 1; max = Infinity; i++; }
+      else if (c === "?") { min = 0; max = 1; i++; }
+      else if (c === "{") {
+        const m = QUANT_RE.exec(src.slice(i));
+        if (!m) return atom;
+        min = +m[1];
+        max = m[2] ? (m[3] === "" ? Infinity : +m[3]) : min;
+        if (max < min) err("The numbers in {" + m[1] + "," + m[3] + "} are out of order");
+        i += m[0].length;
+      } else return atom;
+      if (atom.type === "bol" || atom.type === "eol" || atom.type === "wordb") err("Nothing to repeat: an anchor can't take a quantifier", atom.start);
+      let greedy = true;
+      if (src[i] === "?") { greedy = false; i++; }
+      if (src[i] === "*" || src[i] === "+" || src[i] === "?" || (src[i] === "{" && QUANT_RE.test(src.slice(i)))) err("Nothing to repeat: two quantifiers in a row");
+      const n = mk("quant", atom.start, { body: atom, min, max, greedy });
+      n.end = i;
+      return n;
+    }
+    function close(start) {
+      if (src[i] !== ")") err("Missing ) to close the group", start);
+      i++;
+    }
+    function parseAtom() {
+      const start = i, c = src[i];
+      if (c === "(") {
+        i++;
+        let n;
+        if (src.startsWith("?:", i)) {
+          i += 2; const body = parseAlt(); close(start);
+          n = mk("group", start, { body, index: null });
+        } else if (src.startsWith("?=", i) || src.startsWith("?!", i)) {
+          const neg = src[i + 1] === "!"; i += 2; const body = parseAlt(); close(start);
+          n = mk("look", start, { body, neg });
+        } else if (src.startsWith("?<=", i) || src.startsWith("?<!", i)) {
+          err("Lookbehind isn't supported by the stepper yet", start);
+        } else if (src.startsWith("?<", i)) {
+          const m = /^\?<([A-Za-z_$][\w$]*)>/.exec(src.slice(i));
+          if (!m) err("Invalid group name", start);
+          i += m[0].length;
+          const index = ++groupCount;
+          if (names[m[1]]) err('The group name "' + m[1] + '" is used twice', start);
+          names[m[1]] = index;
+          const body = parseAlt(); close(start);
+          n = mk("group", start, { body, index, name: m[1] });
+        } else if (src[i] === "?") {
+          err("Unknown group syntax after (?", start);
+        } else {
+          const index = ++groupCount; const body = parseAlt(); close(start);
+          n = mk("group", start, { body, index });
+        }
+        n.end = i;
+        return n;
+      }
+      if (c === "[") return parseClass();
+      if (c === ".") { i++; return mk("any", start, { end: i }); }
+      if (c === "^") { i++; return mk("bol", start, { end: i }); }
+      if (c === "$") { i++; return mk("eol", start, { end: i }); }
+      if (c === "*" || c === "+" || c === "?") err("Nothing to repeat before " + c);
+      if (c === "{" && QUANT_RE.test(src.slice(i))) err("Nothing to repeat before {");
+      if (c === "\\") return parseEscape();
+      i++;
+      return mk("char", start, { end: i, ch: c });
+    }
+    function parseEscape() {
+      const start = i;
+      i++;
+      const c = src[i];
+      if (c === undefined) err("The pattern can't end with a lone backslash", start);
+      i++;
+      if ("dwsDWS".includes(c)) return mk("class", start, { end: i, neg: false, items: [{ cls: c.toLowerCase(), neg: c !== c.toLowerCase() }] });
+      if (c === "b" || c === "B") return mk("wordb", start, { end: i, neg: c === "B" });
+      if (c >= "1" && c <= "9") {
+        let num = c;
+        while (/\d/.test(src[i] || "")) num += src[i++];
+        const n = mk("backref", start, { end: i, index: +num });
+        backrefs.push(n);
+        return n;
+      }
+      if (c === "k" && src[i] === "<") {
+        const m = /^<([A-Za-z_$][\w$]*)>/.exec(src.slice(i));
+        if (!m) err("Invalid named backreference", start);
+        i += m[0].length;
+        const n = mk("backref", start, { end: i, name: m[1] });
+        backrefs.push(n);
+        return n;
+      }
+      const ch = escChar(c);
+      return mk("char", start, { end: i, ch });
+    }
+    function escChar(c) {
+      switch (c) {
+        case "n": return "\n";
+        case "t": return "\t";
+        case "r": return "\r";
+        case "f": return "\f";
+        case "v": return "\v";
+        case "0": return "\0";
+        case "x": {
+          const m = /^[0-9a-fA-F]{2}/.exec(src.slice(i));
+          if (!m) return "x";
+          i += 2;
+          return String.fromCharCode(parseInt(m[0], 16));
+        }
+        case "u": {
+          const m = /^[0-9a-fA-F]{4}/.exec(src.slice(i));
+          if (!m) return "u";
+          i += 4;
+          return String.fromCharCode(parseInt(m[0], 16));
+        }
+        case "c": {
+          const l = src[i];
+          if (l && /[A-Za-z]/.test(l)) { i++; return String.fromCharCode(l.charCodeAt(0) % 32); }
+          i--; // \c without a letter is a literal backslash; the c is read next
+          return "\\";
+        }
+        default: return c;
+      }
+    }
+    function parseClass() {
+      const start = i;
+      i++;
+      let neg = false;
+      if (src[i] === "^") { neg = true; i++; }
+      const items = [];
+      while (i < src.length && src[i] !== "]") {
+        const at = i, a = classAtom();
+        if (src[i] === "-" && i + 1 < src.length && src[i + 1] !== "]") {
+          i++;
+          const b = classAtom();
+          if (a.cls || b.cls) { items.push(a, { lo: 45, hi: 45 }, b); continue; }
+          if (b.lo < a.lo) err("Range out of order in character class", at);
+          items.push({ lo: a.lo, hi: b.lo });
+          continue;
+        }
+        items.push(a);
+      }
+      if (src[i] !== "]") err("Missing ] to close the character class", start);
+      i++;
+      return mk("class", start, { end: i, neg, items });
+    }
+    function classAtom() {
+      if (src[i] === "\\") {
+        i++;
+        const c = src[i];
+        if (c === undefined) err("The pattern can't end with a lone backslash");
+        i++;
+        if ("dwsDWS".includes(c)) return { cls: c.toLowerCase(), neg: c !== c.toLowerCase() };
+        if (c === "b") return { lo: 8, hi: 8 };
+        const code = escChar(c).charCodeAt(0);
+        return { lo: code, hi: code };
+      }
+      const code = src.charCodeAt(i++);
+      return { lo: code, hi: code };
+    }
+
+    const ast = parseAlt();
+    if (i < src.length) err(src[i] === ")" ? "Unmatched ) with no group to close" : "Unexpected character", i);
+    for (const b of backrefs) {
+      if (b.name !== undefined) {
+        if (!names[b.name]) err('There is no group named "' + b.name + '"', b.start);
+        b.index = names[b.name];
+      } else if (b.index > groupCount) {
+        err("\\" + b.index + " refers to group " + b.index + ", but the pattern has " + groupCount + " group" + (groupCount === 1 ? "" : "s"), b.start);
+      }
+    }
+    const walk = (n, f) => {
+      f(n);
+      (n.alts || (n.type === "seq" ? n.items : [])).forEach(x => walk(x, f));
+      if (n.body) walk(n.body, f);
+    };
+    // Captures inside a repeated group reset on every repetition, as in JavaScript.
+    for (const n of nodes) {
+      if (n.type !== "quant") continue;
+      n.inner = [];
+      walk(n.body, x => { if (x.type === "group" && x.index) n.inner.push(x.index); });
+    }
+    return { ast, nodes, groupCount, names, src };
+  }
+
+  function classTest(n, ch, ic) {
+    const hit = c => {
+      const code = c.charCodeAt(0);
+      for (const it of n.items) {
+        if (it.cls) { if (BUILTIN[it.cls](c) !== it.neg) return true; }
+        else if (code >= it.lo && code <= it.hi) return true;
+      }
+      return false;
+    };
+    let r = hit(ch);
+    if (!r && ic) {
+      const l = ch.toLowerCase(), u = ch.toUpperCase();
+      r = (l !== ch && hit(l)) || (u !== ch && u.length === 1 && hit(u));
+    }
+    return r !== n.neg;
+  }
+
+  const ABORT = { abort: true };
+
+  // Runs the pattern and records one frame per decision:
+  // start, ok, no, alt, iter, stop, empty, back, open, cap, lookin, lookok, lookno, fail, match, done.
+  function run(parsed, input, flags, opts = {}) {
+    const { ast, groupCount } = parsed;
+    const record = opts.record !== false;
+    const limit = opts.limit || 200000;
+    const ic = flags.includes("i"), ml = flags.includes("m"), dotAll = flags.includes("s"), global = flags.includes("g");
+    const len = input.length;
+    const trace = [];
+    const stats = { frames: 0, tests: 0, backtracks: 0, attempts: 0, maxDepth: 0 };
+    const heat = new Uint32Array(parsed.nodes.length);
+    let depth = 0, attempt = 0;
+    const eqc = (a, b) => a === b || (ic && a.toLowerCase() === b.toLowerCase());
+
+    function ev(k, n, p, c, x) {
+      if (++stats.frames > limit) throw ABORT;
+      if (n) heat[n.id]++;
+      if (record) trace.push({ k, n: n ? n.id : -1, p, c, d: depth, s: attempt, x });
+    }
+    function test(ok, n, pos, caps, width) {
+      stats.tests++;
+      ev(ok ? "ok" : "no", n, pos, caps, width);
+      return ok;
+    }
+
+    function m(n, pos, caps, k) {
+      if (++depth > stats.maxDepth) stats.maxDepth = depth;
+      const r = step(n, pos, caps, k);
+      depth--;
+      return r;
+    }
+
+    function quant(n, pos, caps, k, count) {
+      const canMore = count < n.max, canStop = count >= n.min;
+      const tryMore = () => {
+        ev("iter", n, pos, caps, count + 1);
+        let c = caps;
+        if (n.inner.length) { c = caps.slice(); for (const g of n.inner) c[g] = null; }
+        return m(n.body, pos, c, (p, c2) => {
+          if (p === pos && count >= n.min) { ev("empty", n, p, c2); return false; }
+          return quant(n, p, c2, k, count + 1);
+        });
+      };
+      const tryStop = () => { ev("stop", n, pos, caps, count); return k(pos, caps); };
+      if (n.greedy) {
+        if (canMore) {
+          if (tryMore()) return true;
+          if (canStop) { stats.backtracks++; ev("back", n, pos, caps, count); }
+        }
+        return canStop ? tryStop() : false;
+      }
+      if (canStop) {
+        if (tryStop()) return true;
+        if (canMore) { stats.backtracks++; ev("back", n, pos, caps, count); }
+      }
+      return canMore ? tryMore() : false;
+    }
+
+    function step(n, pos, caps, k) {
+      switch (n.type) {
+        case "char":
+          return test(pos < len && eqc(input[pos], n.ch), n, pos, caps, 1) && k(pos + 1, caps);
+        case "any":
+          return test(pos < len && (dotAll || !isLineTerm(input[pos])), n, pos, caps, 1) && k(pos + 1, caps);
+        case "class":
+          return test(pos < len && classTest(n, input[pos], ic), n, pos, caps, 1) && k(pos + 1, caps);
+        case "bol":
+          return test(pos === 0 || (ml && isLineTerm(input[pos - 1])), n, pos, caps, 0) && k(pos, caps);
+        case "eol":
+          return test(pos === len || (ml && isLineTerm(input[pos])), n, pos, caps, 0) && k(pos, caps);
+        case "wordb":
+          return test((isWordCh(input[pos - 1]) !== isWordCh(input[pos])) !== n.neg, n, pos, caps, 0) && k(pos, caps);
+        case "backref": {
+          const g = caps[n.index];
+          const sub = g ? input.slice(g[0], g[1]) : "";
+          let ok = pos + sub.length <= len;
+          for (let j = 0; ok && j < sub.length; j++) if (!eqc(input[pos + j], sub[j])) ok = false;
+          return test(ok, n, pos, caps, sub.length) && k(pos + sub.length, caps);
+        }
+        case "seq": {
+          const items = n.items;
+          const next = (j, p, c) => j === items.length ? k(p, c) : m(items[j], p, c, (p2, c2) => next(j + 1, p2, c2));
+          return next(0, pos, caps);
+        }
+        case "alt":
+          for (let j = 0; j < n.alts.length; j++) {
+            if (j > 0) { stats.backtracks++; ev("back", n, pos, caps, j); }
+            ev("alt", n, pos, caps, j);
+            if (m(n.alts[j], pos, caps, k)) return true;
+          }
+          return false;
+        case "group":
+          if (!n.index) return m(n.body, pos, caps, k);
+          ev("open", n, pos, caps);
+          return m(n.body, pos, caps, (p, c) => {
+            const c2 = c.slice();
+            c2[n.index] = [pos, p];
+            ev("cap", n, p, c2, pos);
+            return k(p, c2);
+          });
+        case "look": {
+          ev("lookin", n, pos, caps);
+          let got = null;
+          const r = m(n.body, pos, caps, (p, c) => { got = c; return true; });
+          const ok = n.neg ? !r : r;
+          ev(ok ? "lookok" : "lookno", n, pos, caps);
+          return ok && k(pos, n.neg ? caps : got);
+        }
+        case "quant":
+          return quant(n, pos, caps, k, 0);
+      }
+      throw new Error("Unknown node " + n.type);
+    }
+
+    const caps0 = new Array(groupCount + 1).fill(null);
+    const matches = [];
+    let aborted = false, error = null;
+    try {
+      let from = 0;
+      while (from <= len) {
+        let found = null;
+        for (let s = from; s <= len; s++) {
+          attempt = s;
+          stats.attempts++;
+          ev("start", null, s, caps0);
+          if (m(ast, s, caps0, (p, c) => { found = { start: s, end: p, caps: c }; return true; })) break;
+          ev("fail", null, s, caps0);
+        }
+        if (!found) break;
+        matches.push(found);
+        attempt = found.start;
+        ev("match", null, found.end, found.caps, found);
+        if (!global) break;
+        from = found.end === found.start ? found.end + 1 : found.end;
+      }
+      ev("done", null, len, caps0, matches.length);
+    } catch (e) {
+      if (e === ABORT) aborted = true;
+      else if (e instanceof RangeError) error = "This input is too long to trace step by step. Try a shorter test string.";
+      else throw e;
+    }
+    return { trace, stats, matches, aborted, error, heat };
+  }
+
+  // Runs the same search with the browser's RegExp and compares spans and captures.
+  function compareNative(parsed, input, flags, result) {
+    let re;
+    try { re = new RegExp(parsed.src, flags); }
+    catch (e) { return { ok: false, msg: "Your browser rejects this pattern: " + e.message }; }
+    const out = [];
+    if (flags.includes("g")) {
+      let m;
+      while ((m = re.exec(input))) {
+        out.push(m);
+        if (m[0] === "") re.lastIndex++;
+        if (out.length > 5000) break;
+      }
+    } else {
+      const m = re.exec(input);
+      if (m) out.push(m);
+    }
+    const ours = result.matches;
+    if (out.length !== ours.length) return { ok: false, msg: "Your browser found " + out.length + " match" + (out.length === 1 ? "" : "es") + "; this engine found " + ours.length + "." };
+    for (let j = 0; j < ours.length; j++) {
+      const a = ours[j], b = out[j];
+      if (a.start !== b.index || a.end !== b.index + b[0].length) return { ok: false, msg: "Match " + (j + 1) + " differs from your browser's result." };
+      for (let g = 1; g <= parsed.groupCount; g++) {
+        const ourCap = a.caps[g] ? input.slice(a.caps[g][0], a.caps[g][1]) : undefined;
+        if (ourCap !== b[g]) return { ok: false, msg: "Group " + g + " of match " + (j + 1) + " differs from your browser's result." };
+      }
+    }
+    return { ok: true, msg: "Same matches and captures as your browser's built-in RegExp." };
+  }
+
+  return { parse, run, compareNative };
+})();
+// ENGINE-END
+
+(() => {
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const vis = c => c === " " ? "·" : c === "\n" ? "↵" : c === "\t" ? "⇥" : c === "\r" ? "␍" : c;
+  const clip = (s, n) => s.length > n ? s.slice(0, n) + "…" : s;
+  const q = s => "<q>" + esc(clip(s, 40)).replace(/\n/g, "↵") + "</q>";
+  const code = s => "<code>" + esc(clip(s, 28)) + "</code>";
+  const fmt = n => n.toLocaleString("en-US");
+  const plural = (n, w) => n + " " + w + (n === 1 ? "" : /(ch|sh|s|x)$/.test(w) ? "es" : "s");
+
+  const LIMIT = 200000;
+  const PRESETS = [
+    { id: "greedy", name: "Greedy .+ runs past the tag", src: "<.+>", flags: "g", input: "<b>bold</b> and <i>it</i>", pump: "<b>x</b>", suffix: "" },
+    { id: "lazy", name: "Lazy .+? stops at the first >", src: "<.+?>", flags: "g", input: "<b>bold</b> and <i>it</i>", pump: "<b>x</b>", suffix: "" },
+    { id: "catastrophic", name: "Catastrophic: (a+)+ nested", src: "^(a+)+$", flags: "", input: "aaaaaaaaaaaab", pump: "a", suffix: "b" },
+    { id: "fixed", name: "The fix: a single a+", src: "^a+$", flags: "", input: "aaaaaaaaaaaab", pump: "a", suffix: "b" },
+    { id: "alternation", name: "Overlapping alternatives (a|aa)+", src: "^(a|aa)+$", flags: "", input: "aaaaaaaaaaaaa!", pump: "a", suffix: "!" },
+    { id: "trailing", name: "Trailing spaces: quadratic", src: "\\s+$", flags: "", input: "total:" + " ".repeat(14) + "x", pump: " ", suffix: "x" },
+    { id: "email", name: "Email address", src: "^[\\w.+-]+@[\\w-]+\\.[\\w.]+$", flags: "", input: "ada.lovelace@example.org", pump: "a.", suffix: "@x" },
+    { id: "words", name: "Repeated words (backreference)", src: "\\b(\\w+)\\s+\\1\\b", flags: "gi", input: "This is is a test. The the end.", pump: "ab ", suffix: "" },
+    { id: "password", name: "Password rules (lookaheads)", src: "^(?=.*\\d)(?=.*[A-Z]).{8,}$", flags: "", input: "correcthorse9Battery", pump: "a", suffix: "" },
+    { id: "dates", name: "ISO dates (named groups)", src: "(?<year>\\d{4})-(?<month>\\d{2})-(?<day>\\d{2})", flags: "g", input: "Due 2026-11-02, shipped 2026-11-14", pump: "1", suffix: "" },
+  ];
+
+  const el = {
+    preset: $("#preset"), pattern: $("#pattern"), input: $("#input"), perr: $("#perr"), banner: $("#banner"),
+    pview: $("#pview"), tape: $("#tape"), tapeScroll: $("#tapeScroll"), narr: $("#narr"), scrub: $("#scrub"),
+    fcount: $("#fcount"), speed: $("#speed"), speedOut: $("#speedOut"), timeline: $("#timeline"), stats: $("#stats"),
+    native: $("#native"), caps: $("#caps"), log: $("#log"), tree: $("#tree"), pump: $("#pump"), suffix: $("#suffix"),
+    probeChart: $("#probeChart"), probeVerdict: $("#probeVerdict"), play: $("#bPlay"), playIcon: $("#playIcon"),
+  };
+
+  let S = null, cur = 0, playing = false, raf = 0, acc = 0, last = 0;
+  const flags = new Set();
+
+  // ---------- Setup ----------
+  el.preset.innerHTML = PRESETS.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join("") + `<option value="custom" hidden>Your own pattern</option>`;
+
+  function loadPreset(id) {
+    const p = PRESETS.find(x => x.id === id) || PRESETS[0];
+    el.preset.value = p.id;
+    el.pattern.value = p.src;
+    el.input.value = p.input;
+    flags.clear();
+    for (const f of p.flags) flags.add(f);
+    syncFlags();
+    el.pump.value = p.pump;
+    el.suffix.value = p.suffix;
+    rerun();
+  }
+  function syncFlags() {
+    document.querySelectorAll(".flag").forEach(b => b.setAttribute("aria-pressed", flags.has(b.dataset.flag)));
+  }
+  const flagStr = () => ["g", "i", "m", "s"].filter(f => flags.has(f)).join("");
+
+  // ---------- Run ----------
+  function rerun() {
+    pause();
+    const src = el.pattern.value, input = el.input.value, fl = flagStr();
+    el.perr.hidden = true;
+    el.banner.hidden = true;
+    let parsed;
+    try {
+      parsed = RR.parse(src);
+    } catch (e) {
+      if (!(e instanceof SyntaxError)) throw e;
+      showParseError(src, e);
+      return;
+    }
+    if (input.length > 3000) {
+      showBanner("The test string is " + fmt(input.length) + " characters. Keep it under 3,000 so every step can be recorded.", true);
+      return;
+    }
+    const t0 = performance.now();
+    const res = RR.run(parsed, input, fl, { limit: LIMIT });
+    const ms = performance.now() - t0;
+    if (res.error) { showBanner(res.error, true); return; }
+    S = { src, input, flags: fl, parsed, res, ms, N: res.trace.length };
+    S.matchFrames = [];
+    res.trace.forEach((f, idx) => { if (f.k === "match") S.matchFrames.push({ frame: idx, start: f.x.start, end: f.x.end }); });
+    if (res.aborted) {
+      showBanner(`Stopped after ${fmt(LIMIT)} steps without an answer. This pattern backtracks catastrophically on this input, so the replay covers only the first ${fmt(LIMIT)} steps. Run the growth probe below to see how fast it grows.`);
+    }
+    buildPattern();
+    buildTape();
+    buildTree();
+    buildStats();
+    computeCols();
+    cur = 0;
+    el.scrub.max = Math.max(0, S.N - 1);
+    render();
+    scheduleProbe();
+  }
+
+  function showParseError(src, e) {
+    S = null;
+    el.perr.hidden = false;
+    el.perr.textContent = e.message + (e.pos !== undefined ? ` (at character ${e.pos + 1})` : "");
+    el.pview.innerHTML = src.length ? [...src].map((c, i) => `<span class="pc${i === e.pos ? " err" : ""}">${esc(c)}</span>`).join("") : "";
+    el.tape.innerHTML = "";
+    el.narr.innerHTML = "Fix the pattern to start the replay.";
+    el.stats.innerHTML = "";
+    el.native.textContent = "";
+    el.caps.innerHTML = "";
+    el.log.innerHTML = "";
+    el.tree.innerHTML = "";
+    el.fcount.textContent = "";
+    el.scrub.max = 0;
+    el.probeChart.innerHTML = "";
+    el.probeVerdict.textContent = "";
+    const ctx = el.timeline.getContext("2d");
+    ctx.clearRect(0, 0, el.timeline.width, el.timeline.height);
+  }
+  function showBanner(msg, isErr) {
+    el.banner.hidden = false;
+    el.banner.className = "banner" + (isErr ? " err" : "");
+    el.banner.textContent = msg;
+  }
+
+  // ---------- Builders ----------
+  function buildPattern() {
+    const { src, parsed, res } = S;
+    if (!src.length) { el.pview.innerHTML = `<span class="pempty">(empty pattern: matches the empty string everywhere)</span>`; S.pcells = []; return; }
+    const owner = new Int32Array(src.length).fill(-1);
+    [...parsed.nodes].sort((a, b) => (b.end - b.start) - (a.end - a.start))
+      .forEach(n => { for (let i = n.start; i < n.end; i++) owner[i] = n.id; });
+    let max = 1;
+    for (const h of res.heat) if (h > max) max = h;
+    el.pview.innerHTML = [...src].map((c, i) => {
+      const h = owner[i] >= 0 ? res.heat[owner[i]] : 0;
+      const lvl = h ? Math.log(h + 1) / Math.log(max + 1) : 0;
+      return `<span class="pc${c === " " ? " sp" : ""}" style="--h:${lvl.toFixed(3)}" title="tried ${fmt(h)}×">${esc(vis(c))}</span>`;
+    }).join("");
+    S.pcells = [...el.pview.children];
+  }
+
+  function buildTape() {
+    const { input } = S;
+    const showAll = input.length <= 60;
+    let html = "";
+    for (let i = 0; i < input.length; i++) {
+      const c = input[i];
+      const ws = c === " " || c === "\n" || c === "\t" || c === "\r";
+      html += `<span class="cell${ws ? " ws" : ""}"><b>${esc(vis(c))}</b><i>${showAll || i % 5 === 0 ? i : ""}</i></span>`;
+    }
+    html += `<span class="cell end" title="End of input"><b>end</b><i>${input.length}</i></span>`;
+    el.tape.innerHTML = html;
+    S.tcells = [...el.tape.children];
+    S.tbase = S.tcells.map(c => c.className);
+  }
+
+  function nodeLabel(n, fl) {
+    const snip = S.src.slice(n.start, n.end);
+    switch (n.type) {
+      case "char": return `Literal ${q(n.ch)}`;
+      case "any": return fl.includes("s") ? "Any character" : "Any character except a line break";
+      case "class": return n.items.length === 1 && n.items[0].cls ? `Shorthand class ${code(snip)}` : `${n.neg ? "Any character not in" : "One of"} ${code(snip)}`;
+      case "bol": return fl.includes("m") ? "Start of a line" : "Start of input";
+      case "eol": return fl.includes("m") ? "End of a line" : "End of input";
+      case "wordb": return n.neg ? "Not a word boundary" : "Word boundary";
+      case "backref": return `Same text as group ${n.index}${n.name ? " (" + esc(n.name) + ")" : ""}`;
+      case "group": return n.index ? `Capture group ${n.index}${n.name ? " " + q(n.name) : ""}` : "Non-capturing group";
+      case "look": return n.neg ? "Lookahead: what follows must not match" : "Lookahead: what follows must match";
+      case "alt": return `Either of ${n.alts.length} alternatives`;
+      case "seq": return "In order";
+      case "quant": {
+        const { min, max } = n;
+        let d;
+        if (min === 0 && max === Infinity) d = "Zero or more";
+        else if (min === 1 && max === Infinity) d = "One or more";
+        else if (min === 0 && max === 1) d = "Optional";
+        else if (min === max) d = "Exactly " + min;
+        else if (max === Infinity) d = min + " or more";
+        else d = min + " to " + max;
+        return `${d}, ${n.greedy ? "greedy (as many as possible)" : "lazy (as few as possible)"}`;
+      }
+    }
+    return n.type;
+  }
+  const kids = n => n.alts || (n.type === "seq" ? n.items : n.body ? [n.body] : []);
+
+  function buildTree() {
+    const { parsed, res, flags: fl, src } = S;
+    const rec = n => {
+      const ch = kids(n);
+      const snip = n.type === "seq" || n.type === "alt" ? "" : " " + code(src.slice(n.start, n.end));
+      return `<li><div class="tn" data-id="${n.id}"><span>${nodeLabel(n, fl)}</span>${n.type === "char" ? "" : snip}<span class="th" title="Times the engine tried this">${fmt(res.heat[n.id])}×</span></div>${ch.length ? "<ul>" + ch.map(rec).join("") + "</ul>" : ""}</li>`;
+    };
+    el.tree.innerHTML = "<ul>" + rec(parsed.ast) + "</ul>";
+    S.tnodes = {};
+    el.tree.querySelectorAll(".tn").forEach(t => { S.tnodes[t.dataset.id] = t; });
+    S.treeOn = null;
+  }
+
+  function buildStats() {
+    const { res, ms, parsed, input, flags: fl } = S;
+    const st = res.stats;
+    const rows = [
+      ["Steps", res.aborted ? fmt(LIMIT) + "+" : fmt(S.N), ""],
+      ["Backtracks", fmt(st.backtracks), st.backtracks > 1000 ? "big-back" : ""],
+      ["Character tests", fmt(st.tests), ""],
+      ["Start positions", fmt(st.attempts), ""],
+      ["Matches", res.aborted ? "?" : fmt(res.matches.length), ""],
+      ["Deepest stack", fmt(st.maxDepth), ""],
+    ];
+    el.stats.innerHTML = rows.map(([k, v, c]) => `<div><dt>${k}</dt><dd class="${c}">${v}</dd></div>`).join("");
+    if (res.aborted) {
+      el.native.className = "native";
+      el.native.textContent = "Skipped the browser check: running this in your browser's engine could freeze the tab.";
+    } else {
+      const cmp = RR.compareNative(parsed, input, fl, res);
+      el.native.className = "native " + (cmp.ok ? "good" : "bad");
+      el.native.textContent = (cmp.ok ? "✓ " : "✗ ") + cmp.msg + ` Traced in ${ms < 1 ? "<1" : Math.round(ms)} ms.`;
+    }
+  }
+
+  // ---------- Narration ----------
+  function kindClass(k) {
+    if (k === "ok" || k === "match" || k === "lookok" || k === "cap") return "ok";
+    if (k === "no" || k === "fail" || k === "lookno" || k === "empty") return "no";
+    if (k === "back") return "back";
+    return "";
+  }
+  const TAGS = { start: "attempt", ok: "match", no: "mismatch", alt: "branch", iter: "repeat", stop: "settle", empty: "loop guard", back: "backtrack", open: "group", cap: "capture", lookin: "lookahead", lookok: "lookahead", lookno: "lookahead", fail: "no match here", match: "match found", done: "done" };
+
+  function describe(f) {
+    const { input, parsed } = S;
+    const n = f.n >= 0 ? parsed.nodes[f.n] : null;
+    const sn = n ? code(S.src.slice(n.start, n.end)) : "";
+    const at = "index " + f.p;
+    switch (f.k) {
+      case "start": return `Try to match starting at ${at}.`;
+      case "ok":
+        if (n.type === "bol" || n.type === "eol" || n.type === "wordb") return `${sn} holds at ${at}.`;
+        if (n.type === "backref") return `${sn} repeats ${q(input.substr(f.p, f.x))} at ${at}.`;
+        return `${sn} matches ${q(input[f.p])} at ${at}.`;
+      case "no":
+        if (n.type === "bol" || n.type === "eol" || n.type === "wordb") return `${sn} doesn't hold at ${at}.`;
+        if (n.type === "backref") {
+          const g = f.c[n.index], want = g ? input.slice(g[0], g[1]) : "";
+          return `${sn} needs ${q(want)} at ${at}, but finds ${q(input.substr(f.p, want.length) || "the end")}.`;
+        }
+        if (f.p >= input.length) return `${sn} needs one more character, but the input ends at ${at}.`;
+        return `${sn} doesn't match ${q(input[f.p])} at ${at}.`;
+      case "alt": return `Try alternative ${f.x + 1} of ${n.alts.length}: ${code(S.src.slice(n.alts[f.x].start, n.alts[f.x].end) || "(empty)")}.`;
+      case "back":
+        if (n.type === "alt") return `Alternative ${f.x} failed. Rewind to ${at} and try the next one.`;
+        if (n.greedy) return `Everything after failed, so ${sn} gives back a repetition and settles for ${f.x}, ending at ${at}.`;
+        return `Everything after failed, so lazy ${sn} takes one more repetition at ${at}.`;
+      case "iter": return `${sn} tries repetition ${f.x} at ${at}.`;
+      case "stop": return `${sn} stops at ${plural(f.x, "repetition")}. Continue with the rest of the pattern from ${at}.`;
+      case "empty": return `${sn} matched an empty string, so it stops repeating to avoid an endless loop.`;
+      case "open": return `Enter capture group ${n.index} at ${at}.`;
+      case "cap": return `Group ${n.index} captures ${q(input.slice(f.x, f.p))}.`;
+      case "lookin": return `Lookahead ${sn}: check what follows ${at} without moving forward.`;
+      case "lookok": return `Lookahead ${sn} passes at ${at}.`;
+      case "lookno": return `Lookahead ${sn} fails at ${at}.`;
+      case "fail": return f.p >= input.length ? `No match can start at ${at}, and there are no positions left.` : `No match can start at ${at}. Move the start to index ${f.p + 1}.`;
+      case "match": return `Match found: ${q(input.slice(f.x.start, f.x.end) || "(empty string)")} from index ${f.x.start} to ${f.x.end}.`;
+      case "done": return f.x ? `Done. Found ${plural(f.x, "match")}.` : `Done. The pattern doesn't match this input.`;
+    }
+    return f.k;
+  }
+
+  // ---------- Render one frame ----------
+  function render() {
+    if (!S || !S.N) return;
+    cur = Math.max(0, Math.min(S.N - 1, cur));
+    const f = S.res.trace[cur];
+    const n = f.n >= 0 ? S.parsed.nodes[f.n] : null;
+    const kc = kindClass(f.k);
+
+    // Pattern
+    S.pcells.forEach((c, i) => {
+      const on = n && i >= n.start && i < n.end;
+      c.className = "pc" + (S.src[i] === " " ? " sp" : "") + (on ? " on" + (kc ? " k-" + kc : "") : "") + (S.hl && i >= S.hl[0] && i < S.hl[1] ? " hl" : "");
+    });
+
+    // Tape
+    const len = S.input.length;
+    const confirmed = new Uint8Array(len + 1);
+    for (const mf of S.matchFrames) {
+      if (mf.frame > cur) break;
+      for (let i = mf.start; i < mf.end; i++) confirmed[i] = 1;
+    }
+    const inAttempt = !(f.k === "start" || f.k === "fail" || f.k === "done" || f.k === "match");
+    let lo = -1, hi = -1;
+    if (f.k === "ok" || f.k === "no") { lo = f.p; hi = f.p + Math.max(f.x || 0, f.k === "no" ? 1 : 0); }
+    S.tcells.forEach((c, i) => {
+      let cls = S.tbase[i];
+      if (confirmed[i]) cls += " m";
+      if (inAttempt && i >= f.s && i < f.p) cls += " tent";
+      if (i >= lo && i < hi && i < len) cls += " " + f.k;
+      if (i === f.p && f.k !== "done") cls += " cur";
+      if (i === f.s && f.k !== "done") cls += " st";
+      c.className = cls;
+    });
+    const cell = S.tcells[Math.min(f.p, len)];
+    if (cell) {
+      const sc = el.tapeScroll, l = cell.offsetLeft - el.tape.offsetLeft;
+      if (l < sc.scrollLeft + 20 || l > sc.scrollLeft + sc.clientWidth - 60) sc.scrollLeft = l - sc.clientWidth / 2;
+    }
+
+    // Narration + counter
+    el.narr.innerHTML = `<span class="tag${kc ? " k-" + kc : ""}">${TAGS[f.k] || f.k}</span>${describe(f)}`;
+    el.fcount.textContent = `step ${fmt(cur + 1)} / ${fmt(S.N)}`;
+    el.scrub.value = cur;
+
+    // Tree highlight
+    if (S.treeOn) S.treeOn.classList.remove("on");
+    S.treeOn = n ? S.tnodes[n.id] : null;
+    if (S.treeOn) S.treeOn.classList.add("on");
+
+    renderCaps(f);
+    renderLog();
+    drawTimeline();
+  }
+
+  function renderCaps(f) {
+    const { parsed, input } = S;
+    const rows = [];
+    const inAttempt = !(f.k === "start" || f.k === "fail" || f.k === "done");
+    let whole;
+    if (f.k === "match") whole = [f.x.start, f.x.end];
+    else if (inAttempt) whole = [f.s, f.p];
+    rows.push(["0 · whole match" + (f.k === "match" ? "" : " so far"), whole]);
+    const byIndex = {};
+    for (const [name, idx] of Object.entries(parsed.names)) byIndex[idx] = name;
+    for (let g = 1; g <= parsed.groupCount; g++) rows.push([g + (byIndex[g] ? " · " + byIndex[g] : ""), f.c[g] || null]);
+    el.caps.innerHTML = `<tr><th>Group</th><th>Text</th><th>Span</th></tr>` + rows.map(([name, span]) => span
+      ? `<tr><td>${esc(name)}</td><td class="v">${esc(clip(input.slice(span[0], span[1]), 60)) || '<span class="hint">(empty)</span>'}</td><td class="s">${span[0]}–${span[1]}</td></tr>`
+      : `<tr><td>${esc(name)}</td><td class="none" colspan="2">not set</td></tr>`).join("");
+  }
+
+  function renderLog() {
+    const from = Math.max(0, Math.min(cur - 5, S.N - 11)), to = Math.min(S.N, from + 11);
+    let html = "";
+    for (let i = from; i < to; i++) {
+      const f = S.res.trace[i];
+      const kc = kindClass(f.k);
+      html += `<li data-f="${i}" class="${i === cur ? "now " : ""}${kc ? "k-" + kc : ""}"><span class="fn">${i + 1}</span><span class="d">${describe(f)}</span></li>`;
+    }
+    el.log.innerHTML = html;
+  }
+
+  // ---------- Timeline ----------
+  function computeCols() {
+    if (!S) return;
+    const cv = el.timeline, w = cv.clientWidth || 600, h = 96, dpr = window.devicePixelRatio || 1;
+    cv.width = Math.round(w * dpr);
+    cv.height = Math.round(h * dpr);
+    const N = S.N, tr = S.res.trace, W = Math.max(1, Math.floor(w));
+    const mn = new Float32Array(W).fill(Infinity), mx = new Float32Array(W).fill(-Infinity);
+    const bk = new Uint32Array(W), mt = new Uint8Array(W);
+    for (let f = 0; f < N; f++) {
+      const c = Math.min(W - 1, Math.floor(f * W / N)), p = tr[f].p, k = tr[f].k;
+      if (p < mn[c]) mn[c] = p;
+      if (p > mx[c]) mx[c] = p;
+      if (k === "back") bk[c]++;
+      else if (k === "match") mt[c] = 1;
+    }
+    S.cols = { W, w, h, dpr, mn, mx, bk, mt };
+  }
+  function drawTimeline() {
+    if (!S || !S.cols) return;
+    const { W, w, h, dpr, mn, mx, bk, mt } = S.cols;
+    const ctx = el.timeline.getContext("2d");
+    const cs = getComputedStyle(document.documentElement);
+    const col = v => cs.getPropertyValue(v).trim();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    const top = 12, bot = h - 12, len = Math.max(1, S.input.length);
+    const y = p => bot - (p / len) * (bot - top);
+    ctx.fillStyle = col("--line");
+    ctx.fillRect(0, y(0), w, 1);
+    ctx.fillRect(0, y(len), w, 1);
+    const cw = w / W;
+    ctx.fillStyle = col("--back");
+    for (let c = 0; c < W; c++) if (bk[c]) { ctx.globalAlpha = Math.min(1, .35 + bk[c] * .08); ctx.fillRect(c * cw, 0, Math.max(1, cw), 6); }
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = col("--ok");
+    for (let c = 0; c < W; c++) if (mt[c]) ctx.fillRect(c * cw - 1, h - 6, Math.max(3, cw), 6);
+    if (S.N <= W) {
+      const tr = S.res.trace, step = w / S.N;
+      ctx.strokeStyle = col("--ink");
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      tr.forEach((f, i) => {
+        const xx = (i + .5) * step;
+        if (i === 0) ctx.moveTo(xx, y(f.p)); else ctx.lineTo(xx, y(f.p));
+      });
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = col("--ink");
+      for (let c = 0; c < W; c++) {
+        if (mn[c] === Infinity) continue;
+        ctx.fillRect(c * cw, y(mx[c]) - .75, Math.max(1, cw), Math.max(1.5, y(mn[c]) - y(mx[c]) + 1.5));
+      }
+    }
+    const x = (cur + .5) * w / S.N, f = S.res.trace[cur];
+    ctx.fillStyle = col("--accent");
+    ctx.fillRect(x - 1, 0, 2, h);
+    ctx.beginPath();
+    ctx.arc(x, y(f.p), 4.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  function frameAtX(clientX) {
+    const r = el.timeline.getBoundingClientRect();
+    return Math.floor(Math.max(0, Math.min(.9999, (clientX - r.left) / r.width)) * S.N);
+  }
+  let dragging = false;
+  el.timeline.addEventListener("pointerdown", e => { if (!S) return; dragging = true; el.timeline.setPointerCapture(e.pointerId); pause(); go(frameAtX(e.clientX)); });
+  el.timeline.addEventListener("pointermove", e => { if (dragging) go(frameAtX(e.clientX)); });
+  el.timeline.addEventListener("pointerup", () => { dragging = false; });
+  new ResizeObserver(() => { if (S) { computeCols(); drawTimeline(); } }).observe(el.timeline);
+
+  // ---------- Playback ----------
+  const fps = () => Math.round(Math.pow(10, el.speed.value / 100 * 3.4));
+  function syncSpeed() { el.speedOut.textContent = fmt(fps()) + " steps/s"; }
+  function go(f) { if (!S) return; cur = Math.max(0, Math.min(S.N - 1, f)); render(); }
+  function play() {
+    if (!S) return;
+    if (cur >= S.N - 1) cur = 0;
+    playing = true;
+    el.play.setAttribute("aria-label", "Pause");
+    el.playIcon.innerHTML = '<path d="M3 2h4v12H3zM9 2h4v12H9z"/>';
+    last = performance.now();
+    acc = 0;
+    raf = requestAnimationFrame(tick);
+  }
+  function pause() {
+    playing = false;
+    cancelAnimationFrame(raf);
+    el.play.setAttribute("aria-label", "Play");
+    el.playIcon.innerHTML = '<path d="M4 2v12l10-6z"/>';
+  }
+  function tick(t) {
+    if (!playing) return;
+    acc += (t - last) / 1000 * fps();
+    last = t;
+    const adv = Math.floor(acc);
+    if (adv > 0) { acc -= adv; go(cur + adv); }
+    if (cur >= S.N - 1) { pause(); return; }
+    raf = requestAnimationFrame(tick);
+  }
+  function seek(kind, dir) {
+    if (!S) return;
+    const tr = S.res.trace;
+    for (let i = cur + dir; i >= 0 && i < S.N; i += dir) if (tr[i].k === kind) { go(i); return; }
+    go(dir > 0 ? S.N - 1 : 0);
+  }
+
+  el.play.onclick = () => playing ? pause() : play();
+  $("#bNext").onclick = () => { pause(); go(cur + 1); };
+  $("#bPrev").onclick = () => { pause(); go(cur - 1); };
+  $("#bFirst").onclick = () => { pause(); go(0); };
+  $("#bLast").onclick = () => { pause(); go(S ? S.N - 1 : 0); };
+  $("#bNextBack").onclick = () => { pause(); seek("back", 1); };
+  $("#bPrevBack").onclick = () => { pause(); seek("back", -1); };
+  el.scrub.oninput = () => { pause(); go(+el.scrub.value); };
+  el.speed.oninput = syncSpeed;
+  el.log.onclick = e => { const li = e.target.closest("li"); if (li) { pause(); go(+li.dataset.f); } };
+
+  document.addEventListener("keydown", e => {
+    const t = e.target;
+    if (t.matches("input:not([type=range]), textarea, select") || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === " ") { e.preventDefault(); playing ? pause() : play(); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); pause(); e.shiftKey ? seek("back", 1) : go(cur + 1); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); pause(); e.shiftKey ? seek("back", -1) : go(cur - 1); }
+    else if (e.key === "Home") { e.preventDefault(); pause(); go(0); }
+    else if (e.key === "End") { e.preventDefault(); pause(); go(S ? S.N - 1 : 0); }
+  });
+
+  // Tree hover highlights the node's text in the pattern.
+  el.tree.addEventListener("mouseover", e => {
+    const t = e.target.closest(".tn");
+    if (!t || !S) return;
+    const n = S.parsed.nodes[t.dataset.id];
+    S.hl = [n.start, n.end];
+    render();
+  });
+  el.tree.addEventListener("mouseleave", () => { if (S) { S.hl = null; render(); } });
+  el.tree.addEventListener("click", e => {
+    const t = e.target.closest(".tn");
+    if (!t || !S) return;
+    const id = +t.dataset.id, tr = S.res.trace;
+    for (let i = cur + 1; i < S.N; i++) if (tr[i].n === id) { pause(); go(i); return; }
+  });
+
+  // ---------- Growth probe ----------
+  const PROBE_LIMIT = 1000000;
+  let probeToken = 0, probeTimer = 0;
+  function scheduleProbe() { clearTimeout(probeTimer); probeTimer = setTimeout(runProbe, 150); }
+  function runProbe() {
+    const tok = ++probeToken;
+    if (!S) return;
+    const pump = el.pump.value, suffix = el.suffix.value, parsed = S.parsed, fl = S.flags;
+    if (!pump) { el.probeChart.innerHTML = ""; el.probeVerdict.textContent = "Enter some text to repeat."; return; }
+    const pts = [];
+    const t0 = performance.now();
+    let n = 1;
+    el.probeVerdict.textContent = "Measuring…";
+    const stepFn = () => {
+      if (tok !== probeToken) return;
+      const str = pump.repeat(n) + suffix;
+      const r = RR.run(parsed, str, fl, { record: false, limit: PROBE_LIMIT });
+      pts.push({ n, steps: r.aborted ? PROBE_LIMIT : r.stats.frames, aborted: r.aborted || !!r.error });
+      const elapsed = performance.now() - t0;
+      const done = r.aborted || r.error || n >= 40 || elapsed > 1200 || str.length > 2000;
+      drawProbe(pts, done, pump);
+      if (!done) { n++; setTimeout(stepFn, 0); }
+    };
+    stepFn();
+  }
+  function classify(pts) {
+    const v = pts.filter(p => !p.aborted);
+    const aborted = pts.some(p => p.aborted);
+    if (v.length >= 4) {
+      const tail = v.slice(-4), ratios = [];
+      for (let i = 1; i < tail.length; i++) ratios.push(tail[i].steps / tail[i - 1].steps);
+      ratios.sort((a, b) => a - b);
+      const r = ratios[1];
+      if (r > 1.3) return { kind: "exp", r };
+      const half = v.slice(Math.floor(v.length / 2));
+      const a = half[0], b = half[half.length - 1];
+      const slope = (Math.log(b.steps) - Math.log(a.steps)) / (Math.log(b.n) - Math.log(a.n));
+      if (aborted) return { kind: "exp", r: null };
+      if (slope < 1.35) return { kind: "lin" };
+      if (slope < 2.4) return { kind: "quad" };
+      return { kind: "poly", deg: Math.round(slope) };
+    }
+    return aborted ? { kind: "exp", r: null } : null;
+  }
+  function drawProbe(pts, done, pump) {
+    const W = 460, H = 200, L = 50, R = 14, T = 14, B = 30;
+    const nMax = Math.max(10, pts[pts.length - 1].n);
+    const maxSteps = Math.max(...pts.map(p => p.steps));
+    const dec = Math.max(2, Math.ceil(Math.log10(maxSteps + 1)));
+    const x = n => L + (n - 1) / (nMax - 1) * (W - L - R);
+    const y = s => H - B - Math.log10(Math.max(1, s)) / dec * (H - T - B);
+    const lbl = d => ["1", "10", "100", "1k", "10k", "100k", "1M", "10M", "100M", "1B"][d] || "1e" + d;
+    let g = "";
+    for (let d = 0; d <= dec; d++) g += `<line x1="${L}" x2="${W - R}" y1="${y(10 ** d)}" y2="${y(10 ** d)}"/><text x="${L - 8}" y="${y(10 ** d) + 3}" text-anchor="end">${lbl(d)}</text>`;
+    const xt = [1, ...[5, 10, 15, 20, 25, 30, 35, 40].filter(v => v <= nMax)];
+    let xl = xt.map(v => `<text x="${x(v)}" y="${H - B + 16}" text-anchor="middle">${v}</text>`).join("");
+    const ok = pts.filter(p => !p.aborted);
+    const line = ok.map((p, i) => `${i ? "L" : "M"}${x(p.n).toFixed(1)},${y(p.steps).toFixed(1)}`).join("");
+    const area = ok.length ? `${line}L${x(ok[ok.length - 1].n).toFixed(1)},${H - B}L${x(ok[0].n).toFixed(1)},${H - B}Z` : "";
+    const dots = ok.map((p, i) => `<circle class="${i === ok.length - 1 ? "end" : "pt"}" cx="${x(p.n).toFixed(1)}" cy="${y(p.steps).toFixed(1)}" r="${i === ok.length - 1 ? 4 : 2.5}"><title>${p.n}× → ${fmt(p.steps)} steps</title></circle>`).join("");
+    const ab = pts.filter(p => p.aborted).map(p => `<path class="ab" d="M${x(p.n) - 5},${T + 10}L${x(p.n) + 5},${T + 10}L${x(p.n)},${T}Z"><title>${p.n}× → over 1M steps (stopped)</title></path><text x="${x(p.n) - 8}" y="${T + 9}" text-anchor="end">stopped</text>`).join("");
+    el.probeChart.innerHTML = `<svg class="probe-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="Steps versus repetitions, log scale"><g class="grid">${g}</g>${xl}<text x="${(L + W - R) / 2}" y="${H - 2}" text-anchor="middle">repetitions of ${esc(clip(JSON.stringify(pump), 14))}</text><path class="area" d="${area}"/><path class="ln" d="${line}"/>${dots}${ab}</svg>`;
+    if (!done) return;
+    const c = classify(pts), lastOk = ok[ok.length - 1];
+    let v;
+    if (!c) v = `<span class="chip warn">Too few points</span>Lengthen the repeated piece or the run to classify the growth.`;
+    else if (c.kind === "lin") v = `<span class="chip safe">Linear</span>The work grows in step with the input. At ${lastOk.n} repetitions it takes ${fmt(lastOk.steps)} steps.`;
+    else if (c.kind === "quad") v = `<span class="chip warn">Quadratic</span>Doubling the input roughly quadruples the work. Fine for short strings, slow on long ones.`;
+    else if (c.kind === "poly") v = `<span class="chip warn">Polynomial, about n<sup>${c.deg}</sup></span>The work grows much faster than the input.`;
+    else if (c.r) {
+      const proj = lastOk.steps * Math.pow(c.r, 30 - lastOk.n);
+      v = `<span class="chip bad">Exponential</span>Each extra repetition multiplies the work by about ${c.r.toFixed(2)}×.` + (lastOk.n < 30 ? ` At 30 repetitions that would be roughly ${proj >= 1e9 ? (proj / 1e9).toFixed(0) + " billion" : fmt(Math.round(proj))} steps.` : "");
+    } else v = `<span class="chip bad">Exponential</span>The step count shot past 1 million within ${pts[pts.length - 1].n} repetitions.`;
+    el.probeVerdict.innerHTML = v;
+  }
+  $("#probeBtn").onclick = runProbe;
+  el.pump.addEventListener("keydown", e => { if (e.key === "Enter") runProbe(); });
+  el.suffix.addEventListener("keydown", e => { if (e.key === "Enter") runProbe(); });
+
+  // ---------- Inputs ----------
+  let debounce = 0;
+  const markCustom = () => { el.preset.value = "custom"; };
+  el.pattern.addEventListener("input", () => { markCustom(); clearTimeout(debounce); debounce = setTimeout(rerun, 250); });
+  el.input.addEventListener("input", () => { markCustom(); clearTimeout(debounce); debounce = setTimeout(rerun, 250); });
+  document.querySelectorAll(".flag").forEach(b => b.onclick = () => {
+    const f = b.dataset.flag;
+    flags.has(f) ? flags.delete(f) : flags.add(f);
+    syncFlags();
+    markCustom();
+    rerun();
+  });
+  el.preset.onchange = () => { if (el.preset.value !== "custom") loadPreset(el.preset.value); };
+  $("#copy").onclick = async e => {
+    const lit = "/" + el.pattern.value.replace(/\\.|\//g, m => m === "/" ? "\\/" : m) + "/" + flagStr();
+    const btn = e.currentTarget;
+    try { await navigator.clipboard.writeText(lit); btn.textContent = "Copied"; }
+    catch { el.pattern.select(); btn.textContent = "Press Ctrl+C"; }
+    setTimeout(() => { btn.textContent = "Copy"; }, 1600);
+  };
+
+  syncSpeed();
+  const hashId = location.hash.slice(1);
+  loadPreset(PRESETS.some(p => p.id === hashId) ? hashId : "greedy");
+  if (!matchMedia("(prefers-reduced-motion: reduce)").matches) play();
+  addEventListener("hashchange", () => {
+    const id = location.hash.slice(1);
+    if (PRESETS.some(p => p.id === id)) loadPreset(id);
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "name": "regex-replay",
+  "version": "1.0.0",
+  "description": "Step through a backtracking regex engine one decision at a time and see where catastrophic backtracking comes from.",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "test": "node tests/engine.test.js"
+  },
+  "keywords": ["regex", "regular-expressions", "backtracking", "redos", "debugger", "visualization"]
+}
