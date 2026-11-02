@@ -11,7 +11,7 @@ A regex debugger that **replays the match**. Type a pattern and a test string, t
 - **Growth probe.** Repeats a piece of text 1, 2, 3… times and classifies how the work grows: linear, quadratic, polynomial or exponential. For exponential growth it projects the step count at 30 repetitions.
 - **Verified against the browser.** Every run is compared with the browser's built-in `RegExp`, both match spans and captures.
 - **Captures panel.** Shows the value of each group at the current step, including JavaScript's rule that captures reset on each repetition.
-- Light and dark themes, works at phone width, keyboard shortcuts (`Space`, `←` `→`, `Shift`+arrows, `Home`/`End`).
+- Dark theme shared with [blazexyz.com](https://blazexyz.com), works at phone width, keyboard shortcuts (`Space`, `←` `→`, `Shift`+arrows, `Home`/`End`).
 
 ## Supported syntax
 

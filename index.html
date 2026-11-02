@@ -7,49 +7,40 @@
 <meta name="description" content="Step through a backtracking regex engine one decision at a time and see where catastrophic backtracking comes from.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Allura&family=DM+Mono:wght@300;400;500&family=Montserrat:wght@300&display=swap">
+<link rel="stylesheet" href="bz-theme.css">
+<meta name="theme-color" content="#0a070d">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M4 22 L10 8 L16 18 L22 10 L28 22' fill='none' stroke='%23db94ed' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='22' cy='10' r='3' fill='%237fd8ff'/%3E%3C/svg%3E">
 <style>
 /* Layout: a debugger workbench. Editor bar on top, replay stage on the left,
    run inspector on the right, analysis (structure + growth probe) underneath. */
 :root {
-  --bg: #eceff3;
-  --panel: #fbfcfd;
-  --ink: #17202c;
-  --muted: #5a6575;
-  --line: #d3d9e1;
-  --soft: #e3e8ee;
-  --accent: #b86200;
-  --accent-soft: #fde5c4;
-  --ok: #0b7a5e;
-  --ok-soft: #d2efe5;
-  --no: #c02d39;
-  --no-soft: #f8dadd;
-  --back: #8438c0;
-  --back-soft: #eddcf9;
-  --tent: #fff0d4;
+  /* Mapped onto the shared BZ theme (bz-theme.css), so the page matches blazexyz.com. Dark only, like the main site.
+     Backtracking is cyan, the glass's second colour, so it stays distinct from the pink accent. */
+  --bg: var(--bz-bg);
+  --panel: var(--bz-surface);
+  --ink: var(--bz-text-hi);
+  --muted: var(--bz-text-mid);
+  --line: var(--bz-line);
+  --soft: rgba(255, 255, 255, 0.06);
+  --accent: var(--bz-accent);
+  --accent-soft: rgba(var(--bz-glow-rgb), 0.18);
+  --ok: #3cc69c;
+  --ok-soft: #12352a;
+  --no: #f06a72;
+  --no-soft: #3e1a1f;
+  --back: var(--bz-cyan);
+  --back-soft: rgba(127, 216, 255, 0.14);
+  --tent: rgba(var(--bz-glow-rgb), 0.1);
 
-  --f-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
-  --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
-  --f-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
-  --r: 10px;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #0f1319; --panel: #161b23; --ink: #e4e9f0; --muted: #96a2b3; --line: #2a3240; --soft: #1f2631;
-    --accent: #f0a340; --accent-soft: #3d2b10; --ok: #3cc69c; --ok-soft: #12352a; --no: #f06a72; --no-soft: #3e1a1f;
-    --back: #bb8cf2; --back-soft: #2d2042; --tent: #2c2414;
-    color-scheme: dark;
-  }
-}
-:root[data-theme="dark"] {
-  --bg: #0f1319; --panel: #161b23; --ink: #e4e9f0; --muted: #96a2b3; --line: #2a3240; --soft: #1f2631;
-  --accent: #f0a340; --accent-soft: #3d2b10; --ok: #3cc69c; --ok-soft: #12352a; --no: #f06a72; --no-soft: #3e1a1f;
-  --back: #bb8cf2; --back-soft: #2d2042; --tent: #2c2414;
-  color-scheme: dark;
+  --f-display: var(--bz-sans);
+  --f-body: var(--bz-mono);
+  --f-mono: var(--bz-mono);
+  --r: var(--bz-radius-sm);
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 var(--f-body); }
+body { margin: 0; background: transparent; color: var(--ink); font: 13px/1.6 var(--f-body); }
 [hidden] { display: none !important; }
 .wrap {
   max-width: 1280px; margin: 0 auto;
@@ -66,7 +57,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 /* Header */
 .top { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 24px; }
-.brand h1 { font: 800 clamp(30px, 5vw, 44px)/1 var(--f-display); letter-spacing: -.02em; margin: 0; text-wrap: balance; }
+.brand h1 { font: 300 clamp(30px, 5vw, 44px)/1.1 var(--f-display); letter-spacing: .01em; margin: 0; text-wrap: balance; }
 .brand h1 span { color: var(--accent); }
 .brand p { margin: 6px 0 0; color: var(--muted); max-width: 60ch; }
 .preset { display: flex; flex-direction: column; gap: 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
@@ -85,7 +76,7 @@ select { background: var(--panel); border: 1px solid var(--line); border-radius:
 #pattern { flex: 1 1 200px; min-width: 0; border: 0; background: transparent; font: 600 19px var(--f-mono); padding: 6px 0; outline: none; }
 .flags { display: flex; gap: 4px; }
 .flag { width: 30px; height: 30px; border-radius: 7px; border: 1px solid var(--line); background: transparent; font: 600 14px var(--f-mono); color: var(--muted); cursor: pointer; }
-.flag[aria-pressed="true"] { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+.flag[aria-pressed="true"] { background: var(--bz-active-bg); color: var(--ink); border-color: rgba(var(--bz-glow-rgb), .38); box-shadow: var(--bz-active-shadow); }
 .ghost { border: 1px solid var(--line); background: transparent; border-radius: 7px; padding: 4px 10px; height: 30px; cursor: pointer; font-size: 13px; }
 .ghost:hover, .flag:hover { border-color: var(--muted); }
 #input {
@@ -101,7 +92,7 @@ select { background: var(--panel); border: 1px solid var(--line); border-radius:
 .grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 18px; align-items: start; }
 .grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; align-items: start; }
 .side { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
-.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.panel { background: var(--bz-glass-bg); border: 1px solid var(--bz-glass-border); box-shadow: var(--bz-glass-shadow); border-radius: var(--bz-radius); padding: 16px 18px; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
 .ptitle { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
 .hint { text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--muted); font-size: 13px; }
 p.hint { margin: 0; }
@@ -159,7 +150,7 @@ p.hint { margin: 0; }
 }
 .btn:hover { border-color: var(--muted); }
 .btn svg { width: 16px; height: 16px; fill: currentColor; }
-.btn.play { background: var(--ink); color: var(--panel); border-color: var(--ink); min-width: 44px; }
+.btn.play { background: var(--bz-active-bg); color: var(--ink); border-color: rgba(var(--bz-glow-rgb), .38); box-shadow: var(--bz-active-shadow); min-width: 44px; }
 .btn.bk { color: var(--back); }
 #scrub { flex: 1 1 180px; min-width: 120px; accent-color: var(--accent); }
 .fcount { font: 13px var(--f-mono); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -226,8 +217,23 @@ td.none { color: var(--muted); font-style: italic; font-family: var(--f-body); }
 .chip.bad { background: var(--no-soft); color: var(--no); }
 
 footer { color: var(--muted); font-size: 13px; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px 28px; border-top: 1px solid var(--line); padding-top: 18px; }
-footer h2 { font: 600 14px var(--f-display); color: var(--ink); margin: 0 0 4px; }
+footer h2 { font: 400 11px var(--f-body); letter-spacing: .16em; text-transform: uppercase; color: var(--ink); margin: 0 0 4px; }
 footer p { margin: 0; max-width: 65ch; }
+
+/* BZ theme: labels and controls, as on blazexyz.com */
+.field > label, .ptitle, .preset { font-weight: 400; letter-spacing: .2em; font-size: 10px; color: rgba(var(--bz-glow-rgb), .9); }
+.ptitle .hint { color: var(--muted); }
+.brand p { color: var(--bz-text-lo); font-size: 12px; line-height: 1.7; }
+.brand .bz-home { margin-bottom: 10px; }
+.btn, .ghost, .flag { background: rgba(255, 255, 255, .04); transition: border-color .2s, background .2s; }
+.btn:hover, .ghost:hover, .flag:hover { border-color: rgba(var(--bz-glow-rgb), .45); }
+.btn.bk { color: var(--back); }
+.pattern-box, #input, select, .probe-in input { background: rgba(0, 0, 0, .28); }
+.pattern-box:focus-within, #input:focus { border-color: rgba(var(--bz-glow-rgb), .5); }
+#timeline { background: rgba(0, 0, 0, .28); border: 1px solid var(--line); }
+.cell { background: rgba(0, 0, 0, .28); }
+.cell.ok, .cell.no { color: var(--bz-bg); }
+.stats dd { font-weight: 500; }
 
 @media (max-width: 980px) {
   .grid, .grid2, .editor { grid-template-columns: minmax(0, 1fr); }
@@ -238,11 +244,13 @@ footer p { margin: 0; max-width: 65ch; }
 </style>
 </head>
 <body>
+<div class="bz-hud" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
 
 <div class="wrap">
   <header class="top">
     <div class="brand">
-      <h1>Regex <span>Replay</span></h1>
+      <a class="bz-home" href="https://blazexyz.com">blazexyz.com</a>
+      <h1 class="bz-sans">Regex <span class="bz-script">Replay</span></h1>
       <p>Watch a backtracking regex engine work through your pattern one decision at a time, and see exactly where the wasted work comes from.</p>
     </div>
     <label class="preset" for="preset">Example
@@ -277,7 +285,7 @@ footer p { margin: 0; max-width: 65ch; }
 
   <main class="grid">
     <section class="panel" aria-label="Replay">
-      <div class="ptitle">Pattern <span class="hint">The violet underline shows how often each piece was tried.</span></div>
+      <div class="ptitle">Pattern <span class="hint">The cyan underline shows how often each piece was tried.</span></div>
       <div id="pview" class="pview mono"></div>
 
       <div class="ptitle">Input</div>
